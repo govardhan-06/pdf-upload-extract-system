@@ -1,0 +1,7 @@
+python-dotenv
+fastapi
+uvicorn
+python-multipart
+pytesseract
+PyMuPDF
+langchain
