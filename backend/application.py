@@ -6,7 +6,7 @@ from PIL import Image
 import pytesseract
 import io
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import requests
 from functools import lru_cache
 
@@ -115,6 +115,26 @@ async def extract_pdf(pdf_url: str):
         return JSONResponse(content={"text_chunks": result}, status_code=200)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+
+@app.get("/pdf/")
+async def get_pdf(pdf_url: str):
+    try:
+        response = requests.get(pdf_url, timeout=10)
+        response.raise_for_status()
+        
+        return Response(
+            content=response.content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "inline",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("application:app", host="0.0.0.0", port=8000, reload=True)
