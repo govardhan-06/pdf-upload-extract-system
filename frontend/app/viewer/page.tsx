@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Worker, Viewer } from '@react-pdf-viewer/core';
-import type { SpecialZoomLevel } from '@react-pdf-viewer/core';
+import { Worker, Viewer, Position } from '@react-pdf-viewer/core';
+import type { SpecialZoomLevel, RenderPageProps } from '@react-pdf-viewer/core';
 import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
 import { highlightPlugin, Trigger } from '@react-pdf-viewer/highlight';
 import { useSearchParams } from 'next/navigation';
@@ -20,10 +20,22 @@ interface TextChunk {
   page: number;
 }
 
+interface Highlight {
+  pageIndex: number;
+  boundingRect: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  };
+  text: string;
+}
+
 export default function PDFViewer() {
   const [textChunks, setTextChunks] = useState<TextChunk[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedChunk, setSelectedChunk] = useState<TextChunk | null>(null);
   const searchParams = useSearchParams();
   const { theme } = useTheme();
   const pdfUrl = searchParams.get('url');
@@ -31,10 +43,54 @@ export default function PDFViewer() {
   const defaultLayoutPluginInstance = defaultLayoutPlugin({
     sidebarTabs: (defaultTabs) => [],
   });
-  
+
   const highlightPluginInstance = highlightPlugin({
     trigger: Trigger.None,
   });
+
+  // Convert TextChunk to Highlight format
+  const createHighlight = (chunk: TextChunk): Highlight => {
+    const [x1, y1, x2, y2] = chunk.bbox;
+    return {
+      pageIndex: chunk.page - 1, // Convert 1-based to 0-based page index
+      boundingRect: {
+        x1,
+        y1,
+        x2,
+        y2,
+      },
+      text: chunk.text,
+    };
+  };
+
+  // Custom render for the page that includes highlights
+  const renderPage = (props: RenderPageProps) => {
+    return (
+      <>
+        {props.canvasLayer.children}
+        {props.textLayer.children}
+        {props.annotationLayer.children}
+        {selectedChunk && selectedChunk.page - 1 === props.pageIndex && (
+          <div
+            style={{
+              position: 'absolute',
+              left: `${selectedChunk.bbox[0]}px`,
+              top: `${selectedChunk.bbox[1]}px`,
+              width: `${selectedChunk.bbox[2] - selectedChunk.bbox[0]}px`,
+              height: `${selectedChunk.bbox[3] - selectedChunk.bbox[1]}px`,
+              backgroundColor: 'rgba(59, 130, 246, 0.3)',
+              mixBlendMode: 'multiply',
+              border: '2px solid rgba(59, 130, 246, 0.7)',
+              borderRadius: '2px',
+              pointerEvents: 'none',
+              transform: `scale(${props.scale})`,
+              transformOrigin: '0 0',
+            }}
+          />
+        )}
+      </>
+    );
+  };
 
   useEffect(() => {
     const fetchTextChunks = async () => {
@@ -73,7 +129,7 @@ export default function PDFViewer() {
     fetchTextChunks();
   }, [pdfUrl]);
 
-  // Format text chunks into markdown
+  // Format text chunks into markdown content
   const formatTextContent = (chunks: TextChunk[]) => {
     const groupedByPage = chunks
       .sort((a, b) => {
@@ -84,14 +140,66 @@ export default function PDFViewer() {
         if (!acc[chunk.page]) {
           acc[chunk.page] = [];
         }
-        acc[chunk.page].push(chunk.text);
+        acc[chunk.page].push(chunk);
         return acc;
-      }, {} as Record<number, string[]>);
+      }, {} as Record<number, TextChunk[]>);
 
     return Object.entries(groupedByPage)
       .sort(([pageA], [pageB]) => Number(pageA) - Number(pageB))
-      .map(([page, texts]) => `${texts.join(' ')}\n\n`)
-      .join('');
+      .map(([page, chunks]) => {
+        const pageContent = chunks.map((chunk, index) => ({
+          ...chunk,
+          isSelected: chunk === selectedChunk
+        }));
+
+        return (
+          <div key={page} className="mb-4">
+            <div className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">
+              Page {page}
+            </div>
+            <div className="text-content">
+              {pageContent.map((chunk, index) => (
+                <span
+                  key={`${page}-${index}`}
+                  className={`inline cursor-pointer ${
+                    chunk.isSelected
+                      ? 'bg-blue-100 dark:bg-blue-900/50'
+                      : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'
+                  } rounded px-1 py-0.5 transition-colors`}
+                  onClick={() => setSelectedChunk(chunk)}
+                >
+                  <ReactMarkdown
+                    components={{
+                      p: ({ children }) => (
+                        <span className={`inline ${
+                          chunk.isSelected
+                            ? 'text-blue-900 dark:text-blue-100'
+                            : 'text-gray-800 dark:text-gray-200'
+                        }`}>
+                          {children}
+                        </span>
+                      ),
+                      strong: ({ children }) => (
+                        <strong className="font-semibold text-gray-900 dark:text-white">
+                          {children}
+                        </strong>
+                      ),
+                      em: ({ children }) => (
+                        <em className="italic text-gray-800 dark:text-gray-200">
+                          {children}
+                        </em>
+                      ),
+                    }}
+                  >
+                    {chunk.text}
+                  </ReactMarkdown>
+                  {index < pageContent.length - 1 && ' '}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      });
   };
 
   if (loading) {
@@ -136,6 +244,8 @@ export default function PDFViewer() {
                   plugins={[defaultLayoutPluginInstance, highlightPluginInstance]}
                   theme={theme === 'dark' ? 'dark' : 'light'}
                   defaultScale={1}
+                  renderPage={renderPage}
+                  onPageChange={() => setSelectedChunk(null)}
                   renderError={(error) => (
                     <div className="flex items-center justify-center h-full">
                       <div className="text-center p-4">
@@ -169,14 +279,8 @@ export default function PDFViewer() {
 
           {/* Text Content Panel */}
           <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown
-                components={{
-                  p: ({ children }) => <p className="mb-4 text-gray-800 dark:text-gray-200">{children}</p>,
-                }}
-              >
-                {formatTextContent(textChunks)}
-              </ReactMarkdown>
+            <div className="space-y-4 text-base leading-relaxed">
+              {formatTextContent(textChunks)}
             </div>
           </div>
         </div>
