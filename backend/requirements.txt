@@ -2,7 +2,5 @@ python-dotenv
 fastapi
 uvicorn
 python-multipart
-# pytesseract  to be replaced
 PyMuPDF
-langchain
 easyocr

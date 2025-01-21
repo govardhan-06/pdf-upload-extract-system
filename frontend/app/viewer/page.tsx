@@ -103,7 +103,7 @@ export default function PDFViewer() {
       }
 
       try {
-        const response = await fetch(`http://localhost:8000/extract/?pdf_url=${encodeURIComponent(pdfUrl)}`, {
+        const response = await fetch(`http://localhost:8000/extract?pdf_url=${encodeURIComponent(pdfUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
