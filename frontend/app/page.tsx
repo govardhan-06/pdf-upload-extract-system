@@ -7,13 +7,24 @@ import { useTheme } from './ThemeProvider';
 export default function Home() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  const { theme, toggleTheme } = useTheme();
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const { theme, toggleTheme } = useTheme();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
-    router.push(`/viewer?url=${encodeURIComponent(url)}`);
+    setError(null);
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+      router.push(`/viewer?url=${encodeURIComponent(url)}`);
+    } catch (error) {
+      console.error('Error processing URL:', error);
+      setError(error instanceof Error ? error.message : 'Failed to process URL');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -39,7 +50,7 @@ export default function Home() {
                 htmlFor="pdfUrl" 
                 className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-2"
               >
-                Upload PDF URL
+                Enter PDF URL
               </label>
               <input
                 id="pdfUrl"
@@ -51,6 +62,9 @@ export default function Home() {
                 required
               />
             </div>
+            {error && (
+              <div className="text-red-500 text-sm">{error}</div>
+            )}
             <button
               type="submit"
               disabled={loading}
@@ -63,4 +77,4 @@ export default function Home() {
       </div>
     </main>
   );
-} 
+}

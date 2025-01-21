@@ -103,7 +103,8 @@ export default function PDFViewer() {
       }
 
       try {
-        const response = await fetch(`http://localhost:8000/extract?pdf_url=${encodeURIComponent(pdfUrl)}`, {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -231,7 +232,7 @@ export default function PDFViewer() {
     );
   }
 
-  const proxyUrl = pdfUrl ? `http://localhost:8000/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
+  const proxyUrl = pdfUrl ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
