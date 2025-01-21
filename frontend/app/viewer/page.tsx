@@ -63,28 +63,30 @@ export default function PDFViewer() {
     };
   };
 
-  // Custom render for the page that includes highlights
+  // Custom render for the page that includes highlights with zoom stability
   const renderPage = (props: RenderPageProps) => {
     return (
       <>
+        {/* Main content layers */}
         {props.canvasLayer.children}
         {props.textLayer.children}
         {props.annotationLayer.children}
+
+        {/* Highlight overlay */}
         {selectedChunk && selectedChunk.page - 1 === props.pageIndex && (
           <div
             style={{
               position: 'absolute',
-              left: `${selectedChunk.bbox[0]}px`,
-              top: `${selectedChunk.bbox[1]}px`,
-              width: `${selectedChunk.bbox[2] - selectedChunk.bbox[0]}px`,
-              height: `${selectedChunk.bbox[3] - selectedChunk.bbox[1]}px`,
+              left: `${selectedChunk.bbox[0] * props.scale}px`,
+              top: `${selectedChunk.bbox[1] * props.scale}px`,
+              width: `${(selectedChunk.bbox[2] - selectedChunk.bbox[0]) * props.scale}px`,
+              height: `${(selectedChunk.bbox[3] - selectedChunk.bbox[1]) * props.scale}px`,
               backgroundColor: 'rgba(59, 130, 246, 0.3)',
               mixBlendMode: 'multiply',
               border: '2px solid rgba(59, 130, 246, 0.7)',
               borderRadius: '2px',
               pointerEvents: 'none',
-              transform: `scale(${props.scale})`,
-              transformOrigin: '0 0',
+              transition: 'all 0.1s ease',
             }}
           />
         )}
@@ -246,6 +248,14 @@ export default function PDFViewer() {
                   defaultScale={1}
                   renderPage={renderPage}
                   onPageChange={() => setSelectedChunk(null)}
+                  onZoom={({ scale }) => {
+                    // Force re-render when zoom changes
+                    if (selectedChunk) {
+                      const updatedChunk = { ...selectedChunk };
+                      setSelectedChunk(null);
+                      setTimeout(() => setSelectedChunk(updatedChunk), 0);
+                    }
+                  }}
                   renderError={(error) => (
                     <div className="flex items-center justify-center h-full">
                       <div className="text-center p-4">
