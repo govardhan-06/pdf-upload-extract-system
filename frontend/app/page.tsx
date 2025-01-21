@@ -17,7 +17,6 @@ export default function Home() {
     setError(null);
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
       router.push(`/viewer?url=${encodeURIComponent(url)}`);
     } catch (error) {
       console.error('Error processing URL:', error);

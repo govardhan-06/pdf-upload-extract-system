@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Worker, Viewer, Position } from '@react-pdf-viewer/core';
-import type { SpecialZoomLevel, RenderPageProps } from '@react-pdf-viewer/core';
+import { Worker, Viewer } from '@react-pdf-viewer/core';
+import type { RenderPageProps } from '@react-pdf-viewer/core';
 import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
 import { highlightPlugin, Trigger } from '@react-pdf-viewer/highlight';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from '../ThemeProvider';
 import ReactMarkdown from 'react-markdown';
+import Link from 'next/link';
 
 // Import styles
 import '@react-pdf-viewer/core/lib/styles/index.css';
@@ -20,17 +21,6 @@ interface TextChunk {
   page: number;
 }
 
-interface Highlight {
-  pageIndex: number;
-  boundingRect: {
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-  };
-  text: string;
-}
-
 export default function PDFViewer() {
   const [textChunks, setTextChunks] = useState<TextChunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,27 +31,12 @@ export default function PDFViewer() {
   const pdfUrl = searchParams.get('url');
 
   const defaultLayoutPluginInstance = defaultLayoutPlugin({
-    sidebarTabs: (defaultTabs) => [],
+    sidebarTabs: () => [],
   });
 
   const highlightPluginInstance = highlightPlugin({
     trigger: Trigger.None,
   });
-
-  // Convert TextChunk to Highlight format
-  const createHighlight = (chunk: TextChunk): Highlight => {
-    const [x1, y1, x2, y2] = chunk.bbox;
-    return {
-      pageIndex: chunk.page - 1, // Convert 1-based to 0-based page index
-      boundingRect: {
-        x1,
-        y1,
-        x2,
-        y2,
-      },
-      text: chunk.text,
-    };
-  };
 
   // Custom render for the page that includes highlights with zoom stability
   const renderPage = (props: RenderPageProps) => {
@@ -121,9 +96,9 @@ export default function PDFViewer() {
         } else {
           throw new Error('Invalid response format');
         }
-      } catch (error) {
-        console.error('Error fetching text chunks:', error);
-        setError(error instanceof Error ? error.message : 'Failed to fetch text chunks');
+      } catch (err) {
+        console.error('Error fetching text chunks:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch text chunks');
       } finally {
         setLoading(false);
       }
@@ -149,8 +124,8 @@ export default function PDFViewer() {
 
     return Object.entries(groupedByPage)
       .sort(([pageA], [pageB]) => Number(pageA) - Number(pageB))
-      .map(([page, chunks]) => {
-        const pageContent = chunks.map((chunk, index) => ({
+      .map(([page, pageChunks]) => {
+        const pageContent = pageChunks.map(chunk => ({
           ...chunk,
           isSelected: chunk === selectedChunk
         }));
@@ -161,9 +136,9 @@ export default function PDFViewer() {
               Page {page}
             </div>
             <div className="text-content">
-              {pageContent.map((chunk, index) => (
+              {pageContent.map((chunk, idx) => (
                 <span
-                  key={`${page}-${index}`}
+                  key={`${page}-${idx}`}
                   className={`inline cursor-pointer ${
                     chunk.isSelected
                       ? 'bg-blue-100 dark:bg-blue-900/50'
@@ -196,7 +171,7 @@ export default function PDFViewer() {
                   >
                     {chunk.text}
                   </ReactMarkdown>
-                  {index < pageContent.length - 1 && ' '}
+                  {idx < pageContent.length - 1 && ' '}
                 </span>
               ))}
             </div>
@@ -221,12 +196,12 @@ export default function PDFViewer() {
       <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-900">
         <div className="text-center p-8 max-w-md bg-white dark:bg-gray-800 rounded-lg shadow-lg">
           <p className="text-red-500 mb-4">Error: {error}</p>
-          <a
+          <Link
             href="/"
             className="inline-block px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
           >
             Go Back Home
-          </a>
+          </Link>
         </div>
       </div>
     );
@@ -235,63 +210,30 @@ export default function PDFViewer() {
   const proxyUrl = pdfUrl ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-900">
-      <div className="container mx-auto p-4">
-        <div className="grid grid-cols-2 gap-6">
-          {/* PDF Viewer */}
-          <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            {proxyUrl && (
-              <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.worker.min.js">
-                <Viewer
-                  fileUrl={proxyUrl}
-                  plugins={[defaultLayoutPluginInstance, highlightPluginInstance]}
-                  theme={theme === 'dark' ? 'dark' : 'light'}
-                  defaultScale={1}
-                  renderPage={renderPage}
-                  onPageChange={() => setSelectedChunk(null)}
-                  onZoom={({ scale }) => {
-                    // Force re-render when zoom changes
-                    if (selectedChunk) {
-                      const updatedChunk = { ...selectedChunk };
-                      setSelectedChunk(null);
-                      setTimeout(() => setSelectedChunk(updatedChunk), 0);
-                    }
-                  }}
-                  renderError={(error) => (
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center p-4">
-                        <p className="text-red-500 mb-4">Failed to load PDF</p>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">
-                          There was an error loading the PDF. Please try again.
-                        </p>
-                        <a
-                          href={pdfUrl || '#'}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                        >
-                          Open PDF in New Tab
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  renderLoader={(percentages: number) => (
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center">
-                        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <p>Loading PDF... {Math.round(percentages)}%</p>
-                      </div>
-                    </div>
-                  )}
-                />
-              </Worker>
-            )}
-          </div>
+    <div className={`min-h-screen ${theme === 'dark' ? 'dark' : ''}`}>
+      <div className="min-h-screen bg-white dark:bg-gray-900 transition-colors">
+        <div className="container mx-auto p-4">
+          <div className="grid grid-cols-2 gap-6">
+            {/* PDF Viewer */}
+            <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+              {proxyUrl && (
+                <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.4.120/build/pdf.worker.min.js">
+                  <Viewer
+                    fileUrl={proxyUrl}
+                    plugins={[defaultLayoutPluginInstance, highlightPluginInstance]}
+                    theme={theme === 'dark' ? 'dark' : 'light'}
+                    defaultScale={1}
+                    renderPage={renderPage}
+                  />
+                </Worker>
+              )}
+            </div>
 
-          {/* Text Content Panel */}
-          <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
-            <div className="space-y-4 text-base leading-relaxed">
-              {formatTextContent(textChunks)}
+            {/* Text Content Panel */}
+            <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
+              <div className="space-y-4 text-base leading-relaxed text-gray-900 dark:text-gray-100">
+                {formatTextContent(textChunks)}
+              </div>
             </div>
           </div>
         </div>
