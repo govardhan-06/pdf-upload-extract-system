@@ -20,8 +20,9 @@ class Helper:
         self.redis_client = redis.StrictRedis(
             host=os.getenv("REDIS_HOST"), 
             port=os.getenv("REDIS_PORT"), 
-            db=0, 
-            decode_responses=True, 
+            password=os.getenv("REDIS_PASSWORD"),
+            ssl=True,
+            decode_responses=True ,
             socket_timeout=5
         )
         
@@ -127,6 +128,3 @@ class Helper:
             self.logger.error(f"Error processing PDF: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
         return chunks
-
-# Create a singleton instance
-helper = Helper()
