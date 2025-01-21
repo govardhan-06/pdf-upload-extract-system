@@ -14,6 +14,7 @@
     "@react-pdf-viewer/highlight": "^3.12.0",
     "@types/axios": "^0.14.4",
     "axios": "^1.7.9",
+    "canvas": "^3.0.1",
     "next": "15.1.5",
     "pdfjs-dist": "^3.4.120",
     "react": "^19.0.0",
