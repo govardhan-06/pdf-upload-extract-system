@@ -26,8 +26,7 @@ interface TextChunk {
 export default function PDFViewer() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10); // or any other page size
-  const observer = useRef<IntersectionObserver | null>(null);
-  const loader = useRef(null);
+  const [endPage, setEndPage] = useState(pageSize);
   const chunkCache = useRef(new Map());
   const [textChunks, setTextChunks] = useState<TextChunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,65 +75,60 @@ export default function PDFViewer() {
     );
   };
 
-  useEffect(() => {
-    const fetchTextChunks = async () => {
-      if (!pdfUrl) {
-        setError('No PDF URL provided');
-        setLoading(false);
-        return;
-      }
+  const fetchTextChunks = async (startPage: number, endPage: number) => {
+    if (!pdfUrl) {
+      setError('No PDF URL provided');
+      setLoading(false);
+      return;
+    }
 
-      const cacheKey = `${pdfUrl}-${page}`;
-      if (chunkCache.current.has(cacheKey)) {
-        setTextChunks(prevChunks => [...prevChunks, ...chunkCache.current.get(cacheKey)]);
-        setLoading(false);
-        return;
-      }
+    const cacheKey = `${pdfUrl}-${startPage}-${endPage}`;
+    if (chunkCache.current.has(cacheKey)) {
+      setTextChunks(prevChunks => [...prevChunks, ...chunkCache.current.get(cacheKey)]);
+      setLoading(false);
+      return;
+    }
 
-      try {
-        const backendUrl = 'http://localhost:8000';
-        const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}&start_page=${page}&end_page=${page + pageSize - 1}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+    try {
+      const backendUrl = 'http://localhost:8000';
+      const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}&start_page=${startPage}&end_page=${endPage}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         }
-        const data = await response.json();
-        if (data.text_chunks && Array.isArray(data.text_chunks)) {
-          chunkCache.current.set(cacheKey, data.text_chunks);
-          setTextChunks(prevChunks => [...prevChunks, ...data.text_chunks]);
-        } else {
-          throw new Error('Invalid response format');
-        }
-      } catch (err) {
-        console.error('Error fetching text chunks:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch text chunks');
-      } finally {
-        setLoading(false);
-      }
-    };
+      });
 
-    fetchTextChunks();
-  }, [pdfUrl, page]);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      if (data.text_chunks && Array.isArray(data.text_chunks)) {
+        chunkCache.current.set(cacheKey, data.text_chunks);
+        setTextChunks(prevChunks => [...prevChunks, ...data.text_chunks]);
+      } else {
+        throw new Error('Invalid response format');
+      }
+    } catch (err) {
+      console.error('Error fetching text chunks:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch text chunks');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (observer.current) observer.current.disconnect();
+    fetchTextChunks(1, pageSize);
+  }, [pdfUrl]);
 
-    observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting) {
-        setPage(prevPage => prevPage + 1);
-      }
-    });
-
-    if (loader.current) observer.current.observe(loader.current);
-
-    return () => observer.current?.disconnect();
-  }, []);
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    if (newPage > endPage) {
+      const newEndPage = newPage + pageSize - 1;
+      fetchTextChunks(endPage + 1, newEndPage);
+      setEndPage(newEndPage);
+    }
+  };
 
   // Format text chunks into markdown content
   const formatTextContent = (chunks: TextChunk[]) => {
@@ -209,7 +203,7 @@ export default function PDFViewer() {
       });
   };
 
-  if (loading) {
+  if (loading && page === 1) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-900">
         <div className="text-center">
@@ -253,6 +247,7 @@ export default function PDFViewer() {
                     theme={theme === 'dark' ? 'dark' : 'light'}
                     defaultScale={1}
                     renderPage={renderPage}
+                    onPageChange={({ currentPage }) => handlePageChange(currentPage + 1)}
                   />
                 </Worker>
               )}
@@ -262,7 +257,12 @@ export default function PDFViewer() {
             <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
               <div className="space-y-4 text-base leading-relaxed text-gray-900 dark:text-gray-100">
                 {formatTextContent(textChunks)}
-                <div ref={loader} />
+                {loading && (
+                  <div className="text-center">
+                    <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-600 dark:text-gray-300">Loading more content...</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
