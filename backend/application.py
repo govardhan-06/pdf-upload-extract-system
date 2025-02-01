@@ -54,11 +54,10 @@ async def extract_pdf(
     try:
         # Process the PDF with pagination
         start = time.time()
-        result = helper.process_pdf(pdf_bytes, start_page=start_page, end_page=end_page)
+        result, totalPages = helper.process_pdf(pdf_bytes, start_page=start_page, end_page=end_page)
         end = time.time()
         logger.info(f"PDF processed in {end - start:.2f} seconds")
 
-        # Build paginated response
         response = {
             "text_chunks": result,
             "current_page_range": (start_page, end_page or len(result)),

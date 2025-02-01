@@ -140,3 +140,6 @@ class Helper:
             raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
         return chunks, total_pages
+    
+    # filepath: /f:/pdf-upload-extract/backend/scripts.py
+from concurrent.futures import ThreadPoolExecutor

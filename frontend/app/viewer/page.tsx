@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { FixedSizeList as List } from 'react-window';
+import ErrorBoundary from './ErrorBoundary';
 import { Worker, Viewer } from '@react-pdf-viewer/core';
 import type { RenderPageProps } from '@react-pdf-viewer/core';
 import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
@@ -22,6 +24,11 @@ interface TextChunk {
 }
 
 export default function PDFViewer() {
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(10); // or any other page size
+  const observer = useRef<IntersectionObserver | null>(null);
+  const loader = useRef(null);
+  const chunkCache = useRef(new Map());
   const [textChunks, setTextChunks] = useState<TextChunk[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,9 +84,16 @@ export default function PDFViewer() {
         return;
       }
 
+      const cacheKey = `${pdfUrl}-${page}`;
+      if (chunkCache.current.has(cacheKey)) {
+        setTextChunks(prevChunks => [...prevChunks, ...chunkCache.current.get(cacheKey)]);
+        setLoading(false);
+        return;
+      }
+
       try {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-        const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}`, {
+        const backendUrl = 'http://localhost:8000';
+        const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}&start_page=${page}&end_page=${page + pageSize - 1}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -92,7 +106,8 @@ export default function PDFViewer() {
         }
         const data = await response.json();
         if (data.text_chunks && Array.isArray(data.text_chunks)) {
-          setTextChunks(data.text_chunks);
+          chunkCache.current.set(cacheKey, data.text_chunks);
+          setTextChunks(prevChunks => [...prevChunks, ...data.text_chunks]);
         } else {
           throw new Error('Invalid response format');
         }
@@ -105,7 +120,21 @@ export default function PDFViewer() {
     };
 
     fetchTextChunks();
-  }, [pdfUrl]);
+  }, [pdfUrl, page]);
+
+  useEffect(() => {
+    if (observer.current) observer.current.disconnect();
+
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) {
+        setPage(prevPage => prevPage + 1);
+      }
+    });
+
+    if (loader.current) observer.current.observe(loader.current);
+
+    return () => observer.current?.disconnect();
+  }, []);
 
   // Format text chunks into markdown content
   const formatTextContent = (chunks: TextChunk[]) => {
@@ -207,7 +236,7 @@ export default function PDFViewer() {
     );
   }
 
-  const proxyUrl = pdfUrl ? `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
+  const proxyUrl = pdfUrl ? `${'http://localhost:8000'}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'dark' : ''}`}>
@@ -233,6 +262,7 @@ export default function PDFViewer() {
             <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
               <div className="space-y-4 text-base leading-relaxed text-gray-900 dark:text-gray-100">
                 {formatTextContent(textChunks)}
+                <div ref={loader} />
               </div>
             </div>
           </div>
@@ -240,4 +270,4 @@ export default function PDFViewer() {
       </div>
     </div>
   );
-} 
+}
