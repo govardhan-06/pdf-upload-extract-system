@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { FixedSizeList as List } from 'react-window';
-import ErrorBoundary from './ErrorBoundary';
 import { Worker, Viewer } from '@react-pdf-viewer/core';
 import type { RenderPageProps } from '@react-pdf-viewer/core';
 import { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
@@ -26,10 +24,12 @@ interface TextChunk {
 export default function PDFViewer() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10); // or any other page size
+  const [startPage, setStartPage] = useState(1);
   const [endPage, setEndPage] = useState(pageSize);
   const chunkCache = useRef(new Map());
   const [textChunks, setTextChunks] = useState<TextChunk[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false); // New state for loading more content
   const [error, setError] = useState<string | null>(null);
   const [selectedChunk, setSelectedChunk] = useState<TextChunk | null>(null);
   const searchParams = useSearchParams();
@@ -84,8 +84,9 @@ export default function PDFViewer() {
 
     const cacheKey = `${pdfUrl}-${startPage}-${endPage}`;
     if (chunkCache.current.has(cacheKey)) {
-      setTextChunks(prevChunks => [...prevChunks, ...chunkCache.current.get(cacheKey)]);
+      setTextChunks(chunkCache.current.get(cacheKey));
       setLoading(false);
+      setLoadingMore(false); // Stop loading more indicator
       return;
     }
 
@@ -105,7 +106,7 @@ export default function PDFViewer() {
       const data = await response.json();
       if (data.text_chunks && Array.isArray(data.text_chunks)) {
         chunkCache.current.set(cacheKey, data.text_chunks);
-        setTextChunks(prevChunks => [...prevChunks, ...data.text_chunks]);
+        setTextChunks(data.text_chunks); // Overwriting with new chunks
       } else {
         throw new Error('Invalid response format');
       }
@@ -114,18 +115,22 @@ export default function PDFViewer() {
       setError(err instanceof Error ? err.message : 'Failed to fetch text chunks');
     } finally {
       setLoading(false);
+      setLoadingMore(false); // Stop loading more indicator
     }
   };
 
   useEffect(() => {
-    fetchTextChunks(1, pageSize);
+    fetchTextChunks(startPage, endPage);
   }, [pdfUrl]);
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
-    if (newPage > endPage) {
+    if (!(newPage < endPage && newPage > startPage)) {
       const newEndPage = newPage + pageSize - 1;
-      fetchTextChunks(endPage + 1, newEndPage);
+      setLoadingMore(true); // Start loading more indicator
+      newPage = (newPage <= 6) ? 1 : newPage-5;
+      fetchTextChunks(newPage, newEndPage);
+      setStartPage(newPage); // Update startPage
       setEndPage(newEndPage);
     }
   };
@@ -256,8 +261,8 @@ export default function PDFViewer() {
             {/* Text Content Panel */}
             <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
               <div className="space-y-4 text-base leading-relaxed text-gray-900 dark:text-gray-100">
-                {formatTextContent(textChunks)}
-                {loading && (
+                {formatTextContent(textChunks)} {/* This is where the chunks are displayed */}
+                {loadingMore && ( // Show loading more indicator
                   <div className="text-center">
                     <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                     <p className="text-gray-600 dark:text-gray-300">Loading more content...</p>
