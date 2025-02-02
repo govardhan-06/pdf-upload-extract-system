@@ -15,6 +15,25 @@ import '@react-pdf-viewer/core/lib/styles/index.css';
 import '@react-pdf-viewer/default-layout/lib/styles/index.css';
 import '@react-pdf-viewer/highlight/lib/styles/index.css';
 
+const LoadingNotification = ({ show }: { show: boolean }) => {
+  return (
+    <div
+      className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-50 transition-all duration-300 ease-in-out
+        ${show ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'}`}
+    >
+      <div className="min-w-[250px] bg-white dark:bg-gray-800 
+        rounded-lg border-2 border-blue-400 dark:border-blue-500
+        shadow-lg px-6 py-3 flex items-center justify-center space-x-4">
+        <div className="w-5 h-5 border-3 border-blue-500 dark:border-blue-400 
+          border-t-transparent rounded-full animate-spin"></div>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+          Loading more content...
+        </span>
+      </div>
+    </div>
+  );
+};
+
 interface TextChunk {
   text: string;
   bbox: number[];
@@ -260,16 +279,11 @@ export default function PDFViewer() {
 
             {/* Text Content Panel */}
             <div className="h-[calc(100vh-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-y-auto">
+              <LoadingNotification show={loadingMore} />
               <div className="space-y-4 text-base leading-relaxed text-gray-900 dark:text-gray-100">
-                {formatTextContent(textChunks)} {/* This is where the chunks are displayed */}
-                {loadingMore && ( // Show loading more indicator
-                  <div className="text-center">
-                    <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                    <p className="text-gray-600 dark:text-gray-300">Loading more content...</p>
-                  </div>
-                )}
+                {formatTextContent(textChunks)}
               </div>
-            </div>
+          </div>
           </div>
         </div>
       </div>
