@@ -56,7 +56,7 @@ async def extract_pdf(
         start = time.time()
         result, totalPages = helper.process_pdf(pdf_bytes, start_page=start_page, end_page=end_page)
         end = time.time()
-        logger.info(f"PDF processed in {end - start:.2f} seconds")
+        print(f"PDF processed in {end - start:.2f} seconds")
 
         response = {
             "text_chunks": result,
