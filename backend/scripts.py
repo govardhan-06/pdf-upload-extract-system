@@ -1,145 +1,188 @@
 from fastapi import HTTPException
-import fitz  # PyMuPDF
-from concurrent.futures import ThreadPoolExecutor
-import easyocr
+import fitz
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import redis
-import hashlib
-import cv2
+from paddleocr import PaddleOCR
 import os
 import logging
+from PIL import Image
+import io
+from typing import List, Dict, Any, Tuple
+import hashlib
+import gc
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Helper:
     def __init__(self):
-        # Initialize EasyOCR
-        self.reader = easyocr.Reader(["en"], gpu=False)
-        
-        # Redis setup with connection handling and timeout
-        self.redis_client = redis.StrictRedis(
-            host=os.getenv("REDIS_HOST"), 
-            port=os.getenv("REDIS_PORT"), 
-            password=os.getenv("REDIS_PASSWORD"),
-            ssl=True,
-            decode_responses=True,
-            socket_timeout=10
+        self.TEXT_DENSITY_THRESHOLD = 0.3
+        self.MIN_WORD_COUNT = 50
+        self.CHUNK_SIZE = 5
+        self.OCR_BATCH_SIZE = 3
+        self.OCR_DPI = 150
+        self.CACHE_EXPIRY = 3600
+
+        # Initialize OCR once
+        self.reader = PaddleOCR(
+            use_angle_cls=True,
+            lang='en',
+            use_gpu=True if os.getenv('USE_GPU', 'false').lower() == 'true' else False,
+            enable_mkldnn=True
         )
-        
-        # Set up logging
-        logging.basicConfig(level=logging.INFO)
+
+        # Redis setup
+        self.redis_client = redis.StrictRedis(
+            host=os.getenv("REDIS_HOST"),
+            port=os.getenv("REDIS_PORT"),
+            password=os.getenv("REDIS_PASSWORD"),
+            ssl=False,
+            decode_responses=True,
+            socket_timeout=10,
+            socket_keepalive=True,
+            health_check_interval=30
+        )
+
         self.logger = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO)
 
-    def get_ocr_cache(self, image_bytes):
-        """Retrieve cached OCR result from Redis."""
-        cache_key = hashlib.md5(image_bytes).hexdigest()
-        cached_result = self.redis_client.get(cache_key)
-        if cached_result:
-            return eval(cached_result)  # Deserialize cached string
-        return None
+    def _get_cache_key(self, image_bytes: bytes, page_num: int) -> str:
+        return f"ocr:{hashlib.md5(image_bytes.hex().encode()).hexdigest()}:{page_num}"
 
-    def set_ocr_cache(self, image_bytes, ocr_result):
-        """Cache OCR result in Redis."""
-        cache_key = hashlib.md5(image_bytes).hexdigest()
-        self.redis_client.setex(cache_key, 3600, str(ocr_result))  # Cache for 1 hour
+    def _process_ocr_batch(self, images: List[Tuple[bytes, int, float, float]]) -> List[Dict[str, Any]]:
+        """Process a batch of images with OCR"""
+        all_chunks = []
+        for img_data, page_num, pdf_width, pdf_height in images:
+            try:
+                image = Image.open(io.BytesIO(img_data))
+                image_np = np.array(image)
+                
+                img_width, img_height = image_np.shape[1], image_np.shape[0]
+                scale_x = pdf_width / img_width
+                scale_y = pdf_height / img_height
+                
+                ocr_result = self.reader.ocr(image_np, cls=True)
+                
+                if ocr_result and ocr_result[0]:
+                    chunks = []
+                    for line in ocr_result[0]:
+                        if line and len(line) == 2:
+                            bbox, (text, confidence) = line
+                            if bbox and len(bbox) == 4:
+                                x0 = min(point[0] for point in bbox) * scale_x
+                                y0 = min(point[1] for point in bbox) * scale_y
+                                x1 = max(point[0] for point in bbox) * scale_x
+                                y1 = max(point[1] for point in bbox) * scale_y
+                                
+                                if text.strip() and confidence > 0.5:
+                                    chunks.append({
+                                        "text": text.strip(),
+                                        "bbox": [x0, y0, x1, y1],
+                                        "page": page_num,
+                                        "confidence": confidence
+                                    })
+                    all_chunks.extend(chunks)
+                
+                image.close()
+                del image_np
+                gc.collect()
+                
+            except Exception as e:
+                self.logger.error(f"OCR error on page {page_num}: {str(e)}")
+                continue
+                
+        return all_chunks
 
-    def ocr_image_with_easyocr(self, image_bytes):
-        """Perform OCR on an image using EasyOCR."""
-        try:
-            # Check Redis cache first
-            cached_result = self.get_ocr_cache(image_bytes)
-            if cached_result:
-                return cached_result
-
-            # Convert bytes to numpy array and decode as an image
-            nparr = np.frombuffer(image_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is None:
-                self.logger.error("Failed to decode image")
-                return []
-
-            # Perform OCR using EasyOCR
-            result = self.reader.readtext(img)
-            ocr_output = [
-                {
-                    "text": text.strip(),
-                    "bbox": bbox,  # Bounding box coordinates
-                    "confidence": confidence,
-                }
-                for bbox, text, confidence in result
-            ]
-
-            # Cache OCR result
-            self.set_ocr_cache(image_bytes, ocr_output)
-            return ocr_output
-        except Exception as e:
-            self.logger.error(f"OCR Error: {str(e)}")
-            return []
-
-    def process_page(self, page):
-        """Process a single PDF page to extract text and perform OCR if needed."""
+    def process_page(self, page) -> List[Dict[str, Any]]:
+        """Process a single PDF page"""
         page_chunks = []
+        width, height = page.rect.width, page.rect.height
+        page_area = width * height
+        text_area = 0
+        word_count = 0
 
-        # Extract searchable text with bounding boxes
-        for block in page.get_text("dict")["blocks"]:
-            if block.get("type") == 0:  # Text block
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        text = span.get("text", "").strip()
-                        if text:
-                            page_chunks.append({
-                                "text": text,
-                                "bbox": [
-                                    span["bbox"][0],  # x0
-                                    span["bbox"][1],  # y0 
-                                    span["bbox"][2],  # x1
-                                    span["bbox"][3],  # y1
-                                ],
-                                "page": page.number + 1,
-                            })
+        try:
+            # Extract searchable text
+            text_dict = page.get_text("dict")
+            for block in text_dict.get("blocks", []):
+                if block.get("type") == 0:
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text", "").strip()
+                            if text:
+                                bbox = span["bbox"]
+                                page_chunks.append({
+                                    "text": text,
+                                    "bbox": bbox,
+                                    "page": page.number + 1,
+                                })
+                                text_area += (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                                word_count += len(text.split())
 
-        # Perform OCR for non-searchable PDFs
-        if not page_chunks:
-            pixmap = page.get_pixmap(dpi=150)  # Adjust DPI for quality/speed tradeoff
-            img_bytes = pixmap.tobytes(output="png")
-            ocr_result = self.ocr_image_with_easyocr(img_bytes)
-            for ocr_item in ocr_result:
-                page_chunks.append({
-                    "text": ocr_item["text"],
-                    "bbox": ocr_item["bbox"],  # Bounding box from OCR
-                    "confidence": ocr_item["confidence"],
-                    "page": page.number + 1,
-                })
+            text_density = text_area / page_area if page_area > 0 else 0
+            image_count = len(page.get_images())
+
+            if image_count>2 and text_density < self.TEXT_DENSITY_THRESHOLD or word_count < self.MIN_WORD_COUNT:
+                zoom = self.OCR_DPI / 72
+                matrix = fitz.Matrix(zoom, zoom)
+                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                img_bytes = pixmap.tobytes(output="png")
+                
+                cache_key = self._get_cache_key(img_bytes, page.number)
+                cached_result = self.redis_client.get(cache_key)
+                
+                if cached_result:
+                    return eval(cached_result)
+                
+                ocr_chunks = self._process_ocr_batch([(img_bytes, page.number + 1, width, height)])
+                if ocr_chunks:
+                    self.redis_client.setex(cache_key, self.CACHE_EXPIRY, str(ocr_chunks))
+                    return ocr_chunks
+                
+                pixmap = None
+                gc.collect()
+
+        except Exception as e:
+            self.logger.error(f"Page processing error: {str(e)}")
+            return []
 
         return page_chunks
 
-    def process_pdf(self, pdf_bytes, start_page=1, end_page=None):
-        """Process the PDF and extract text within the specified page range."""
+    def process_pdf(self, pdf_bytes: bytes, start_page: int = 1, end_page: int = None) -> Tuple[List[Dict[str, Any]], int]:
+        """Process PDF with optimized chunking"""
         chunks = []
+        total_pages = 0
+        
         try:
             with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
                 total_pages = len(doc)
-
-                # Validate and adjust page range
-                start_page = max(start_page, 1)
+                start_page = max(1, min(start_page, total_pages))
                 end_page = min(end_page or total_pages, total_pages)
+                
                 if start_page > end_page:
-                    raise HTTPException(status_code=400, detail="Invalid page range specified.")
+                    raise HTTPException(status_code=400, detail="Invalid page range")
 
-                # Process pages within the range using multithreading
-                with ThreadPoolExecutor(max_workers=min(4, os.cpu_count())) as executor:
-                    results = executor.map(self.process_page, doc[start_page - 1:end_page])
-                    for page_chunks in results:
-                        chunks.extend(page_chunks)
+                page_ranges = range(start_page - 1, end_page)
+                chunk_ranges = [page_ranges[i:i + self.CHUNK_SIZE] 
+                              for i in range(0, len(page_ranges), self.CHUNK_SIZE)]
 
-        except fitz.FileDataError:
-            raise HTTPException(status_code=400, detail="Invalid PDF file format.")
+                max_workers = min(os.cpu_count() or 4, 8)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(self.process_page, doc[page_num])
+                        for chunk_range in chunk_ranges
+                        for page_num in chunk_range
+                    ]
+                    
+                    for future in as_completed(futures):
+                        if result := future.result():
+                            chunks.extend(result)
+
         except Exception as e:
-            self.logger.error(f"Error processing PDF: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+            self.logger.error(f"PDF processing error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            gc.collect()
 
         return chunks, total_pages
-    
-    # filepath: /f:/pdf-upload-extract/backend/scripts.py
-from concurrent.futures import ThreadPoolExecutor
