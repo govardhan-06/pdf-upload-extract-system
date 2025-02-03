@@ -1,23 +1,42 @@
-# Get the Linux base image
 FROM python:3.11-slim
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y libgomp1
+RUN apt-get update && \
+    apt-get install -y \
+    libgomp1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgl1-mesa-glx \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
 COPY requirements.txt /app/
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+ENV PIP_DEFAULT_TIMEOUT=1000
+ENV PIP_RETRIES=3
+ENV MALLOC_ARENA_MAX=2
 
-# Copy the rest of the application code into the container at /app
+# Install packages in sequence for better dependency resolution
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+
+# Install base PaddlePaddle CPU version
+RUN pip install --no-cache-dir paddlepaddle==2.5.1
+
+# Install PaddleOCR and its dependencies
+RUN pip install --no-cache-dir "paddleocr>=2.7.0.3"
+
+RUN pip install --no-cache-dir opencv-python-headless==4.11.0.86 --no-deps
+
+RUN grep -v "opencv-contrib-python" requirements.txt > requirements_filtered.txt && \
+    pip install --no-cache-dir -r requirements_filtered.txt
+
 COPY . /app
 
-# Make port 8000 available to the world outside this container
 EXPOSE 8000
 
-# Run the FastAPI server
 CMD ["uvicorn", "application:app", "--host", "0.0.0.0", "--port", "8000"]
