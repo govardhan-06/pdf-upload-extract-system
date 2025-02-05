@@ -110,7 +110,7 @@ export default function PDFViewer() {
     }
 
     try {
-      const backendUrl = 'http://localhost:8000';
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
       const response = await fetch(`${backendUrl}/extract?pdf_url=${encodeURIComponent(pdfUrl)}&start_page=${startPage}&end_page=${endPage}`, {
         method: 'POST',
         headers: {
@@ -254,7 +254,9 @@ export default function PDFViewer() {
     );
   }
 
-  const proxyUrl = pdfUrl ? `${'http://localhost:8000'}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
+  const proxyUrl = pdfUrl ? `${BACKEND_URL}/pdf/?pdf_url=${encodeURIComponent(pdfUrl)}` : null;
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'dark' : ''}`}>

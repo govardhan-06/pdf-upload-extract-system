@@ -3,7 +3,7 @@ import fitz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import redis
-from paddleocr import PaddleOCR
+import pytesseract
 import os
 import logging
 from PIL import Image
@@ -24,13 +24,7 @@ class Helper:
         self.OCR_DPI = 150
         self.CACHE_EXPIRY = 3600
 
-        # Initialize OCR once
-        self.reader = PaddleOCR(
-            use_angle_cls=True,
-            lang='en',
-            use_gpu=True if os.getenv('USE_GPU', 'false').lower() == 'true' else False,
-            enable_mkldnn=True
-        )
+        pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_PATH")
 
         # Redis setup
         self.redis_client = redis.StrictRedis(
@@ -56,36 +50,36 @@ class Helper:
         for img_data, page_num, pdf_width, pdf_height in images:
             try:
                 image = Image.open(io.BytesIO(img_data))
-                image_np = np.array(image)
+                # Get OCR data with bounding boxes
+                ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
                 
-                img_width, img_height = image_np.shape[1], image_np.shape[0]
+                img_width, img_height = image.size
                 scale_x = pdf_width / img_width
                 scale_y = pdf_height / img_height
                 
-                ocr_result = self.reader.ocr(image_np, cls=True)
-                
-                if ocr_result and ocr_result[0]:
-                    chunks = []
-                    for line in ocr_result[0]:
-                        if line and len(line) == 2:
-                            bbox, (text, confidence) = line
-                            if bbox and len(bbox) == 4:
-                                x0 = min(point[0] for point in bbox) * scale_x
-                                y0 = min(point[1] for point in bbox) * scale_y
-                                x1 = max(point[0] for point in bbox) * scale_x
-                                y1 = max(point[1] for point in bbox) * scale_y
-                                
-                                if text.strip() and confidence > 0.5:
-                                    chunks.append({
-                                        "text": text.strip(),
-                                        "bbox": [x0, y0, x1, y1],
-                                        "page": page_num,
-                                        "confidence": confidence
-                                    })
-                    all_chunks.extend(chunks)
+                for i in range(len(ocr_data['text'])):
+                    text = ocr_data['text'][i].strip()
+                    conf = float(ocr_data['conf'][i])
+                    
+                    if text and conf > 50:  # Filter low confidence results
+                        x = ocr_data['left'][i]
+                        y = ocr_data['top'][i]
+                        w = ocr_data['width'][i]
+                        h = ocr_data['height'][i]
+                        
+                        # Scale coordinates to PDF space
+                        x0 = x * scale_x
+                        y0 = y * scale_y
+                        x1 = (x + w) * scale_x
+                        y1 = (y + h) * scale_y
+                        
+                        all_chunks.append({
+                            "text": text,
+                            "bbox": [x0, y0, x1, y1],
+                            "page": page_num
+                        })
                 
                 image.close()
-                del image_np
                 gc.collect()
                 
             except Exception as e:

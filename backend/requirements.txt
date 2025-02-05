@@ -61,10 +61,7 @@ opencv-python-headless==4.11.0.86
 opt-einsum==3.3.0
 orjson==3.10.15
 packaging==24.2
-paddleocr==2.9.1
-paddlepaddle==2.6.2
 pillow==11.1.0
-prometheus_client==0.21.1
 prompt_toolkit==3.0.50
 propcache==0.2.1
 protobuf==3.20.2
@@ -73,6 +70,7 @@ pydantic==2.10.5
 pydantic_core==2.27.2
 PyMuPDF==1.25.2
 pyparsing==3.2.1
+pytesseract==0.3.13
 python-bidi==0.6.3
 python-dateutil==2.9.0.post0
 python-docx==1.1.2
@@ -98,8 +96,6 @@ termcolor==2.5.0
 threadpoolctl==3.5.0
 tifffile==2025.1.10
 tomli==2.2.1
-torch==2.5.1
-torchvision==0.20.1
 tqdm==4.67.1
 typing_extensions==4.12.2
 tzdata==2025.1
